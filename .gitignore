@@ -1,0 +1,40 @@
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Byte-compiled files
+*.pyc
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Poetry dependencies
+poetry.lock
+
+# Environment variables
+.env
+*.secrets
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Docker-related
+*.dockerignore
+docker-compose.override.yml
+
+# Ignore compiled binary files
+*.so
+*.out
+*.exe
+
+Makefile
+backend/app/core/serviceAccountKey.json
