@@ -1,7 +1,9 @@
 import os
+import requests
 from simple_salesforce import Salesforce
 from dotenv import load_dotenv
 from backend.app.integrations.sendgrid import send_email
+from backend.app.integrations.twillo import send_whatsapp
 
 load_dotenv()
 
@@ -12,6 +14,8 @@ USERNAME = os.getenv("SALESFORCE_USERNAME")
 PASSWORD = os.getenv("SALESFORCE_PASSWORD")
 SECURITY_TOKEN = os.getenv("SALESFORCE_SECURITY_TOKEN")
 AUTH_URL = os.getenv("SALESFORCE_AUTH_URL")
+SALESFORCE_ACCESS_TOKEN = os.getenv("SALESFORCE_ACCESS_TOKEN")
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 def get_salesforce_instance():
     """Authenticates and returns a Salesforce instance."""
@@ -49,8 +53,8 @@ def get_customer_cases(email):
     result = sf.query(query)
     return result.get("records", [])
 
-def create_salesforce_ticket(email, subject, description):
-    """Creates a new support case in Salesforce and sends email confirmation."""
+def create_salesforce_ticket(email, subject, description, phone_number):
+    """Creates a new support case in Salesforce and sends WhatsApp confirmation."""
     sf = get_salesforce_instance()
     if isinstance(sf, dict) and "error" in sf:
         return sf
@@ -73,7 +77,24 @@ def create_salesforce_ticket(email, subject, description):
 
     case_result = sf.Case.create(new_case)
 
-    # **Send confirmation email to customer**
-    send_email(email, "Support Ticket Created", f"Your ticket '{subject}' has been created!")
+    # **Send WhatsApp confirmation to customer**
+    send_whatsapp(phone_number, f"Your support ticket '{subject}' has been created!")
 
     return {"case_id": case_result.get("id"), "message": "Case created successfully"}
+
+def subscribe_to_salesforce_events():
+    """Subscribes FastAPI to Salesforce Platform Events."""
+    headers = {
+        "Authorization": f"Bearer {SALESFORCE_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "event_type": "salesforce_ticket_created",
+        "data": {
+            "subject": "Test Case from Salesforce",
+            "email": "customer@example.com",
+            "phone_number": "+1234567890"
+        }
+    }
+    response = requests.post(WEBHOOK_URL, json=payload, headers=headers)
+    return response.json()
