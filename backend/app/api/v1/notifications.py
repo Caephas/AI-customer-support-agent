@@ -7,8 +7,10 @@ from backend.app.integrations.twillo import send_sms, send_whatsapp
 
 router = APIRouter()
 
-class SlackMessage(BaseModel): 
-    message: str
+# Define Webhook Event Model
+class SalesforceWebhook(BaseModel):
+    event_type: str
+    data: dict
 
 
 class EmailRequest(BaseModel):
@@ -21,14 +23,31 @@ class TwilioMessage(BaseModel):
     message: str
 
 @router.post("/slack")
-def send_slack(request: SlackMessage):
-    """Sends a Slack message to the support channel."""
-    response = send_slack_message(request.message)
+def send_slack_notification(request: SalesforceWebhook):
+    """Sends Salesforce case updates to Slack."""
     
+    # Extract case details
+    case_id = request.data.get("case_id", "Unknown Case ID")
+    subject = request.data.get("subject", "No Subject")
+    status = request.data.get("status", "No Status")
+    email = request.data.get("email", "No Email")
+    
+    # Format the Slack message
+    slack_message = f"""
+    🚨 *Salesforce Case Update* 🚨
+    *Case ID:* {case_id}
+    *Subject:* {subject}
+    *Status:* {status}
+    *Customer:* {email}
+    """
+
+    # Send message to Slack
+    response = send_slack_message(slack_message)
+
     if response["status"] == "error":
         raise HTTPException(status_code=400, detail=response["detail"])
     
-    return response
+    return {"status": "success", "slack_message": slack_message}
 
 
 @router.post("/email")
