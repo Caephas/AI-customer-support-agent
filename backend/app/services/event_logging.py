@@ -1,5 +1,6 @@
-from backend.app.core.firebase import db
 from datetime import datetime, timezone
+
+from backend.app import db
 
 def log_salesforce_event(case_id, status, subject):
     """Log webhook event into Firebase Firestore."""
