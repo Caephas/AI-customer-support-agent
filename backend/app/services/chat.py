@@ -8,6 +8,11 @@ from backend.app.core.firebase import db
 from backend.app.integrations.salesforce import create_salesforce_ticket
 from backend.app.integrations.slack import send_slack_message
 import time
+import logging
+from backend.app.services.vector_store_pinecone import get_pinecone_vectorstore
+
+# ✅ Configure Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # ✅ Define AI Chatbot State
 class ChatState(TypedDict):
@@ -103,38 +108,74 @@ def check_cached_response(user_id: str, message: str) -> str:
 
 # ✅ AI Response Generation
 def generate_response(state: ChatState) -> ChatState:
-    """Generates AI response using classification & memory."""
+    """Generates AI response while tracking performance metrics."""
+
+    start_time = time.time()  # Start timer
     
+    # ✅ Fetch recent chat history
     history = fetch_chat_history(state["user_id"])
 
-    messages = [SystemMessage(content="You are a customer support AI.")]
-    messages.extend(history)
+    # ✅ Convert last message to HumanMessage (if needed)
+    last_message_data = state["chat_history"][-1]
+    last_message = (
+        HumanMessage(content=last_message_data["content"])
+        if isinstance(last_message_data, dict)
+        else last_message_data
+    )
 
-    last_message = HumanMessage(content=state["chat_history"][-1]["content"])
+    messages = [SystemMessage(content="You are a helpful support assistant.")]
+    messages.extend(history)
     messages.append(last_message)
 
-    # ✅ Call AI Model
+    # ✅ Step 1: Check if the answer is in chat history
+    for past_msg in history:
+        if last_message.content.lower() in past_msg.content.lower():
+            logging.info("✅ Cache Hit: Returning response from chat history.")
+            return {
+                "user_id": state["user_id"],
+                "chat_history": state["chat_history"],
+                "response": past_msg.content,
+                "category": classify_query(last_message.content),
+            }
+
+    # ✅ Step 2: Retrieve relevant documents from Pinecone
+    pinecone_start = time.time()
+    retrieved_docs = retrieve_documents(last_message.content)
+    pinecone_time = round(time.time() - pinecone_start, 2)
+    logging.info(f"📚 Pinecone Query Time: {pinecone_time}s | Documents Retrieved: {len(retrieved_docs)}")
+
+    # ✅ Step 3: Remove duplicate documents
+    unique_docs = list(set(retrieved_docs))
+    knowledge_context = "\n".join(unique_docs)
+
+    if unique_docs:
+        messages.append(SystemMessage(content=f"Relevant knowledge:\n{knowledge_context}"))
+
+    # ✅ Step 4: Call AI Model
+    logging.info(f"📩 AI Model Input: {messages}")
+    
+    ai_start = time.time()
     ai_response = ollama.chat(model="llama3.1:8b", messages=[format_message(m) for m in messages])
+    ai_time = round(time.time() - ai_start, 2)
+
+    # ✅ Step 5: Handle AI response
     response_text = ai_response.message.content if ai_response.message else "No response generated"
 
-    # ✅ Categorize Query
+    if not response_text.strip():
+        logging.warning("⚠️ AI returned an empty response!")
+
+    # ✅ Step 6: Categorize response
     category = classify_query(last_message.content)
 
-    # ✅ If billing, create a Salesforce ticket
-    if category == "billing":
-        case_id = create_salesforce_ticket(
-            email="arinze@terminaltech.com",
-            subject="Billing Issue",
-            description=last_message.content,
-            phone_number="+2348027713127"
-        )
-        response_text = f"Your billing issue has been reported. Case ID: {case_id}. Our finance team will contact you soon."
+    # ✅ Step 7: Log response time & performance metrics
+    execution_time = round(time.time() - start_time, 2)
+    logging.info(f"⏱️ Total AI Processing Time: {execution_time}s | AI Time: {ai_time}s | Category: {category}")
 
     return {
         "user_id": state["user_id"],
         "chat_history": state["chat_history"],
         "response": response_text,
-        "category": category
+        "category": category,
     }
 
 # ✅ Save Chat in Firestore
@@ -182,6 +223,12 @@ def process_chat_async(user_id: str, message: str):
         save_chat(user_id, message, response["response"], response["category"])
     
     return response
+
+def retrieve_documents(query: str):
+    """Fetch relevant knowledge base documents using Pinecone vector search."""
+    vectorstore = get_pinecone_vectorstore()
+    docs = vectorstore.similarity_search(query, k=3)
+    return [doc.page_content for doc in docs]
 
 # ✅ Define LangGraph Flow
 graph = StateGraph(ChatState)
