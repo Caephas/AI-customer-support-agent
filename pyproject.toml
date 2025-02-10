@@ -1,38 +1,36 @@
-[project]
+[tool.poetry]
 name = "customer-support-agent"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "Caephas",email = "arinzeobidiegwu@gmail.com"}
-]
+authors = ["Caephas <arinzeobidiegwu@gmail.com>"]
 readme = "README.md"
-requires-python = "3.10.16"
-dependencies = [
-    "fastapi[all] (>=0.115.8,<0.116.0)",
-    "uvicorn (>=0.34.0,<0.35.0)",
-    "firebase-admin (>=6.6.0,<7.0.0)",
-    "langchain (>=0.3.17,<0.4.0)",
-    "langgraph (>=0.2.69,<0.3.0)",
-    "pydantic (>=2.10.6,<3.0.0)",
-    "python-dotenv (>=1.0.1,<2.0.0)",
-    "httpx (>=0.28.1,<0.29.0)",
-    "langchain-community (>=0.3.16,<0.4.0)",
-    "langchain-ollama (>=0.2.3,<0.3.0)",
-    "pyjwt (>=2.10.1,<3.0.0)",
-    "passlib (>=1.7.4,<2.0.0)",
-    "simple-salesforce (>=1.12.6,<2.0.0)",
-    "requests (>=2.32.3,<3.0.0)",
-    "twilio (>=9.4.4,<10.0.0)",
-    "slack-sdk (>=3.34.0,<4.0.0)",
-    "sendgrid (>=6.11.0,<7.0.0)",
-    "langchain-pinecone (>=0.2.2,<0.3.0)",
-    "celery (>=5.4.0,<6.0.0)",
-    "redis (>=5.2.1,<6.0.0)",
-    "openai (>=1.61.1,<2.0.0)",
-    "tiktoken (>=0.8.0,<0.9.0)",
-    "langchain-openai (>=0.3.3,<0.4.0)",
-]
+packages = [{include = "backend"}]
 
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+fastapi = ">=0.115.8,<0.116.0"
+uvicorn = ">=0.34.0,<0.35.0"
+firebase-admin = ">=6.6.0,<7.0.0"
+langchain = ">=0.3.18,<0.4.0"
+langgraph = ">=0.2.70,<0.3.0"
+pydantic = ">=2.10.6,<3.0.0"
+python-dotenv = ">=1.0.1,<2.0.0"
+httpx = ">=0.28.1,<0.29.0"
+langchain-community = ">=0.3.17,<0.4.0"
+langchain-ollama = ">=0.2.3,<0.3.0"
+pyjwt = ">=2.10.1,<3.0.0"
+passlib = ">=1.7.4,<2.0.0"
+simple-salesforce = ">=1.12.6,<2.0.0"
+requests = ">=2.32.3,<3.0.0"
+twilio = ">=9.4.4,<10.0.0"
+slack-sdk = ">=3.34.0,<4.0.0"
+sendgrid = ">=6.11.0,<7.0.0"
+langchain-pinecone = ">=0.2.2,<0.3.0"
+celery = ">=5.4.0,<6.0.0"
+redis = ">=5.2.1,<6.0.0"
+openai = ">=1.61.1,<2.0.0"
+tiktoken = ">=0.8.0,<0.9.0"
+langchain-openai = ">=0.3.4,<0.4.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
