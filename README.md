@@ -4,7 +4,7 @@ A FastAPI-based AI chatbot with RAG (Retrieval-Augmented Generation), Pinecone v
 
 📌 Features
 
-✅ AI Chatbot powered by Ollama (LLaMA3)
+✅ AI Chatbot powered by OpenAI 
 ✅ Retrieval-Augmented Generation (RAG) using Pinecone Vector Search
 ✅ User Authentication & Token Management with Firebase & JWT
 ✅ Background Processing using Celery & Redis

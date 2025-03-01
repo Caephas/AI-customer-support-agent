@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import TypedDict, List, Union
-import ollama
+import openai 
+import os
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from celery import Celery
@@ -10,6 +11,12 @@ from backend.app.integrations.slack import send_slack_message
 import time
 import logging
 from backend.app.services.vector_store_pinecone import get_pinecone_vectorstore
+
+# Set up OpenAI API key from environment variable
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Define your model name for OpenAI
+MODEL_NAME = "gpt-3.5-turbo"
 
 # ✅ Configure Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -31,15 +38,16 @@ celery_app = Celery(
 
 celery_app.conf.update(
     task_track_started=True,
-    result_backend="redis://localhost:6379/0",
-    result_extended=True
+    result_backend="redis://redis:6379/0",
+    result_extended=True,
+    broker_connection_retry_on_startup=True,
 )
 
-# ✅ Initialize AI Model (Ollama - Llama3)
-chat_model = ollama.chat(model="llama3.1:8b")
-# ✅ Format Messages for Ollama
+# Note: We no longer need to instantiate a model instance like with Ollama.
+
+# ✅ Format Messages for OpenAI API (same structure as before)
 def format_message(message):
-    """Formats messages for the Ollama AI model."""
+    """Formats messages for the OpenAI API."""
     if isinstance(message, SystemMessage):
         return {"role": "system", "content": message.content}
     elif isinstance(message, HumanMessage):
@@ -48,20 +56,24 @@ def format_message(message):
         return {"role": "assistant", "content": message.content}
     else:
         return {"role": "user", "content": str(message)}
-# ✅ Query Classification Logic
+
+# ✅ Query Classification Logic using OpenAI API
 def classify_query(message: str) -> str:
     classification_prompt = f"""
-    You are a customer support assistant. Classify the following query into one of these categories:
-    - "billing" (if the question is about payments, invoices, refunds)
-    - "technical" (if the question is about login issues, bugs, system errors)
-    - "general" (if the question is simple and can be answered directly)
-    - "escalation" (if the question is unclear or needs human intervention)
-    
-    Query: "{message}"
-    Reply with only one word: billing, technical, general, or escalation.
+You are a customer support assistant. Classify the following query into one of these categories:
+- "billing" (if the question is about payments, invoices, refunds)
+- "technical" (if the question is about login issues, bugs, system errors)
+- "general" (if the question is simple and can be answered directly)
+- "escalation" (if the question is unclear or needs human intervention)
+
+Query: "{message}"
+Reply with only one word: billing, technical, general, or escalation.
     """
-    classification_response = ollama.generate(model="llama3.1:8b", prompt=classification_prompt)
-    return classification_response["response"].strip().lower()
+    response = openai.ChatCompletion.create(
+        model=MODEL_NAME,
+        messages=[{"role": "system", "content": classification_prompt}]
+    )
+    return response['choices'][0]['message']['content'].strip().lower()
 
 # ✅ Fetch Chat History
 def fetch_chat_history(user_id: str) -> List[Union[HumanMessage, AIMessage]]:
@@ -95,27 +107,23 @@ def check_cached_response(user_id: str, message: str) -> str:
             occurrences += 1
             last_response = chat_data["response"]
 
-    # ✅ If it's the first time asking, return None (i.e., no cached response)
     if occurrences == 0:
         return None
 
-    # ✅ If it's the second time asking, give a subtle reminder
     if occurrences == 1:
         return f"You've asked this question before! Here's what I told you:\n\n{last_response}"
 
-    # ✅ If it's the third time or more, be more direct
     return f"You've already asked this {occurrences} times! My previous response was:\n\n{last_response}"
 
-# ✅ AI Response Generation
+# ✅ AI Response Generation using OpenAI API
 def generate_response(state: ChatState) -> ChatState:
     """Generates AI response while tracking performance metrics."""
-
     start_time = time.time()  # Start timer
     
-    # ✅ Fetch recent chat history
+    # Fetch recent chat history
     history = fetch_chat_history(state["user_id"])
 
-    # ✅ Convert last message to HumanMessage (if needed)
+    # Convert last message to HumanMessage (if needed)
     last_message_data = state["chat_history"][-1]
     last_message = (
         HumanMessage(content=last_message_data["content"])
@@ -127,10 +135,10 @@ def generate_response(state: ChatState) -> ChatState:
     messages.extend(history)
     messages.append(last_message)
 
-    # ✅ Step 1: Check if the answer is in chat history
+    # Step 1: Check if the answer is in chat history
     for past_msg in history:
         if last_message.content.lower() in past_msg.content.lower():
-            logging.info("✅ Cache Hit: Returning response from chat history.")
+            logging.info("Cache Hit: Returning response from chat history.")
             return {
                 "user_id": state["user_id"],
                 "chat_history": state["chat_history"],
@@ -138,38 +146,40 @@ def generate_response(state: ChatState) -> ChatState:
                 "category": classify_query(last_message.content),
             }
 
-    # ✅ Step 2: Retrieve relevant documents from Pinecone
+    # Step 2: Retrieve relevant documents from Pinecone
     pinecone_start = time.time()
     retrieved_docs = retrieve_documents(last_message.content)
     pinecone_time = round(time.time() - pinecone_start, 2)
-    logging.info(f"📚 Pinecone Query Time: {pinecone_time}s | Documents Retrieved: {len(retrieved_docs)}")
+    logging.info(f"Pinecone Query Time: {pinecone_time}s | Documents Retrieved: {len(retrieved_docs)}")
 
-    # ✅ Step 3: Remove duplicate documents
+    # Step 3: Remove duplicate documents
     unique_docs = list(set(retrieved_docs))
     knowledge_context = "\n".join(unique_docs)
 
     if unique_docs:
         messages.append(SystemMessage(content=f"Relevant knowledge:\n{knowledge_context}"))
 
-    # ✅ Step 4: Call AI Model
-    logging.info(f"📩 AI Model Input: {messages}")
-    
+    # Step 4: Call OpenAI API for AI Response
+    logging.info(f"AI Model Input: {messages}")
     ai_start = time.time()
-    ai_response = ollama.chat(model="llama3.1:8b", messages=[format_message(m) for m in messages])
+    ai_response = openai.ChatCompletion.create(
+        model=MODEL_NAME,
+        messages=[format_message(m) for m in messages]
+    )
     ai_time = round(time.time() - ai_start, 2)
 
-    # ✅ Step 5: Handle AI response
-    response_text = ai_response.message.content if ai_response.message else "No response generated"
+    # Step 5: Handle AI response
+    response_text = ai_response['choices'][0]['message']['content'] if ai_response['choices'] else "No response generated"
 
     if not response_text.strip():
-        logging.warning("⚠️ AI returned an empty response!")
+        logging.warning("AI returned an empty response!")
 
-    # ✅ Step 6: Categorize response
+    # Step 6: Categorize response
     category = classify_query(last_message.content)
 
-    # ✅ Step 7: Log response time & performance metrics
+    # Step 7: Log response time & performance metrics
     execution_time = round(time.time() - start_time, 2)
-    logging.info(f"⏱️ Total AI Processing Time: {execution_time}s | AI Time: {ai_time}s | Category: {category}")
+    logging.info(f"Total AI Processing Time: {execution_time}s | AI Time: {ai_time}s | Category: {category}")
 
     return {
         "user_id": state["user_id"],
@@ -190,14 +200,14 @@ def save_chat(user_id: str, message: str, response: str, category: str):
         }
         db.collection("chats").add(chat_data)
     except Exception as e:
-        print(f"❌ Firestore Error: {e}")
+        print(f"Firestore Error: {e}")
 
 # ✅ Process Chat Async
 @celery_app.task(name='tasks')
 def process_chat_async(user_id: str, message: str):
     """Handles chat requests asynchronously using Celery."""
     
-    # ✅ Check cache before processing
+    # Check cache before processing
     cached_response = check_cached_response(user_id, message)
     if cached_response:
         return {
@@ -207,7 +217,7 @@ def process_chat_async(user_id: str, message: str):
             "category": "cached"
         }
     
-    # ✅ Prepare chat state
+    # Prepare chat state
     chat_state = {
         "user_id": user_id,
         "chat_history": [{"role": "user", "content": message}],
@@ -215,10 +225,10 @@ def process_chat_async(user_id: str, message: str):
         "category": ""
     }
 
-    # ✅ Generate AI Response
+    # Generate AI Response
     response = generate_response(chat_state)
 
-    # ✅ Save Chat History to Firestore (caching it)
+    # Save Chat History to Firestore (caching it)
     if response["response"]:
         save_chat(user_id, message, response["response"], response["category"])
     
