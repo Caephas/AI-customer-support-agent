@@ -8,17 +8,13 @@ from backend.app.api.v1.webhooks import router as webhooks_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="AI-Powered Customer Support Agent", version="1.0.0")
-# Allow requests from frontend (React)
-origins = [
-    "http://localhost:5173",  # Frontend URL
-    "http://127.0.0.1:5173",   # Sometimes frontend uses this
-]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Allow only specified origins
+    allow_origins=["http://localhost:5173"],  # Use ["http://localhost:5173"] for stricter security
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],  # Allows all HTTP methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Include routers

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import TypedDict, List, Union
-import openai 
+from openai import OpenAI
 import os
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -13,26 +13,26 @@ import logging
 from backend.app.services.vector_store_pinecone import get_pinecone_vectorstore
 
 # Set up OpenAI API key from environment variable
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Define your model name for OpenAI
 MODEL_NAME = "gpt-3.5-turbo"
 
-# ✅ Configure Logging
+# Configure Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# ✅ Define AI Chatbot State
+# Define AI Chatbot State
 class ChatState(TypedDict):
     user_id: str
     chat_history: List[Union[HumanMessage, AIMessage]]
     response: str
     category: str  # billing, technical, general, escalation
 
-# ✅ Initialize Celery Worker
+# Initialize Celery Worker
 celery_app = Celery(
     "tasks",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/0",
+    broker="redis://redis:6379/0",
+    backend="redis://redis:6379/0",
     include=["backend.app.services.chat"]
 )
 
@@ -43,9 +43,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
 )
 
-# Note: We no longer need to instantiate a model instance like with Ollama.
-
-# ✅ Format Messages for OpenAI API (same structure as before)
+# Format Messages for OpenAI API (same structure as before)
 def format_message(message):
     """Formats messages for the OpenAI API."""
     if isinstance(message, SystemMessage):
@@ -57,7 +55,7 @@ def format_message(message):
     else:
         return {"role": "user", "content": str(message)}
 
-# ✅ Query Classification Logic using OpenAI API
+# Query Classification Logic using OpenAI API
 def classify_query(message: str) -> str:
     classification_prompt = f"""
 You are a customer support assistant. Classify the following query into one of these categories:
@@ -69,13 +67,13 @@ You are a customer support assistant. Classify the following query into one of t
 Query: "{message}"
 Reply with only one word: billing, technical, general, or escalation.
     """
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[{"role": "system", "content": classification_prompt}]
     )
-    return response['choices'][0]['message']['content'].strip().lower()
+    return response.choices[0].message.content.strip().lower()
 
-# ✅ Fetch Chat History
+# Fetch Chat History
 def fetch_chat_history(user_id: str) -> List[Union[HumanMessage, AIMessage]]:
     chats = (
         db.collection("chats")
@@ -84,12 +82,15 @@ def fetch_chat_history(user_id: str) -> List[Union[HumanMessage, AIMessage]]:
         .limit(10)
         .stream()
     )
-    return [HumanMessage(content=chat.to_dict()["message"]) if i % 2 == 0 else AIMessage(content=chat.to_dict()["response"]) for i, chat in enumerate(chats)]
+    return [
+        HumanMessage(content=chat.to_dict()["message"]) if i % 2 == 0 
+        else AIMessage(content=chat.to_dict()["response"])
+        for i, chat in enumerate(chats)
+    ]
 
-# ✅ Check Cached Response
-def check_cached_response(user_id: str, message: str) -> str:
+# Check Cached Response
+def check_cached_response(user_id: str, message: str) -> Union[str, None]:
     """Checks if a similar query was already answered recently and counts occurrences."""
-    
     cached_chats = (
         db.collection("chats")
         .where("user_id", "==", user_id)
@@ -115,11 +116,11 @@ def check_cached_response(user_id: str, message: str) -> str:
 
     return f"You've already asked this {occurrences} times! My previous response was:\n\n{last_response}"
 
-# ✅ AI Response Generation using OpenAI API
+# AI Response Generation using OpenAI API
 def generate_response(state: ChatState) -> ChatState:
     """Generates AI response while tracking performance metrics."""
     start_time = time.time()  # Start timer
-    
+
     # Fetch recent chat history
     history = fetch_chat_history(state["user_id"])
 
@@ -162,14 +163,14 @@ def generate_response(state: ChatState) -> ChatState:
     # Step 4: Call OpenAI API for AI Response
     logging.info(f"AI Model Input: {messages}")
     ai_start = time.time()
-    ai_response = openai.ChatCompletion.create(
+    ai_response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[format_message(m) for m in messages]
     )
     ai_time = round(time.time() - ai_start, 2)
 
     # Step 5: Handle AI response
-    response_text = ai_response['choices'][0]['message']['content'] if ai_response['choices'] else "No response generated"
+    response_text = ai_response.choices[0].message.content if ai_response.choices else "No response generated"
 
     if not response_text.strip():
         logging.warning("AI returned an empty response!")
@@ -188,7 +189,7 @@ def generate_response(state: ChatState) -> ChatState:
         "category": category,
     }
 
-# ✅ Save Chat in Firestore
+# Save Chat in Firestore
 def save_chat(user_id: str, message: str, response: str, category: str):
     try:
         chat_data = {
@@ -202,11 +203,10 @@ def save_chat(user_id: str, message: str, response: str, category: str):
     except Exception as e:
         print(f"Firestore Error: {e}")
 
-# ✅ Process Chat Async
+# Process Chat Async
 @celery_app.task(name='tasks')
 def process_chat_async(user_id: str, message: str):
     """Handles chat requests asynchronously using Celery."""
-    
     # Check cache before processing
     cached_response = check_cached_response(user_id, message)
     if cached_response:
@@ -216,7 +216,7 @@ def process_chat_async(user_id: str, message: str):
             "response": cached_response,
             "category": "cached"
         }
-    
+
     # Prepare chat state
     chat_state = {
         "user_id": user_id,
@@ -229,9 +229,9 @@ def process_chat_async(user_id: str, message: str):
     response = generate_response(chat_state)
 
     # Save Chat History to Firestore (caching it)
-    if response["response"]:
-        save_chat(user_id, message, response["response"], response["category"])
-    
+    if response.get("response"):
+        save_chat(user_id, message, response["response"], response.get("category", ""))
+
     return response
 
 def retrieve_documents(query: str):
@@ -240,7 +240,7 @@ def retrieve_documents(query: str):
     docs = vectorstore.similarity_search(query, k=3)
     return [doc.page_content for doc in docs]
 
-# ✅ Define LangGraph Flow
+# Define LangGraph Flow
 graph = StateGraph(ChatState)
 graph.add_node("generate_response", generate_response)
 graph.set_entry_point("generate_response")
